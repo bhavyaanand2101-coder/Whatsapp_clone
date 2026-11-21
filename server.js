@@ -13,6 +13,9 @@ const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const url = require("url");
+const helmet = require("helmet");
+const cors = require("cors");
+const cookieParser = require("cookie-parser");
 const { Server } = require("socket.io");
 
 const env = require("./src/config/env");
@@ -20,6 +23,7 @@ const connectDB = require("./src/config/db");
 const { setupSocketIO, activeUsers } = require("./src/sockets/chat.socket");
 const requestLogger = require("./src/middleware/logger.middleware");
 const { notFoundHandler, errorHandler } = require("./src/middleware/error.middleware");
+const { authLimiter, apiLimiter } = require("./src/middleware/rateLimiter.middleware");
 
 // Modular Routers
 const authRoutes = require("./src/routes/auth.routes");
@@ -40,7 +44,7 @@ const httpserver = http.createServer(app);
 const io = new Server(httpserver, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   },
   maxHttpBufferSize: 1e7, // 10MB
 });
@@ -48,17 +52,31 @@ const io = new Server(httpserver, {
 app.set("io", io);
 
 // ------------------------------------------------------------
-// MIDDLEWARE PIPELINE (Unit 2 & Lab 1)
+// MIDDLEWARE PIPELINE (Unit 2 & Lab 1 & Unit 3 Security)
 // ------------------------------------------------------------
 
-// 1. Custom request logger (Unit 2 / Lab 1)
+// 1. Helmet Security Headers (Unit 3 - OWASP protection)
+app.use(
+  helmet({
+    contentSecurityPolicy: false, // Allows CDN scripts for client.html
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+// 2. CORS Handling
+app.use(cors());
+
+// 3. Cookie Parser
+app.use(cookieParser());
+
+// 4. Custom request logger (Unit 2 / Lab 1)
 app.use(requestLogger);
 
-// 2. Built-in body parsers
+// 5. Built-in body parsers
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// 3. OWASP Security Headers (Unit 3)
+// 6. Additional OWASP Security Headers (Unit 3)
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -66,7 +84,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// 4. Static File Hosting
+// 7. Static File Hosting
 if (!fs.existsSync(env.UPLOADS_DIR)) {
   fs.mkdirSync(env.UPLOADS_DIR, { recursive: true });
 }
@@ -74,11 +92,10 @@ app.use("/uploads", express.static(env.UPLOADS_DIR));
 app.use(express.static(path.join(__dirname, "public")));
 
 // ------------------------------------------------------------
-// REST API ENDPOINTS & STARTER BACKWARD COMPATIBILITY
+// REST HANDLERS FOR HEALTH, ROOMS, USERS & SEED (SHARED)
 // ------------------------------------------------------------
 
-// 1. Health check & syllabus diagnostics (Lab 1 / Unit 4 deployment probe)
-app.get("/api/health", (req, res) => {
+const handleHealth = (req, res) => {
   res.json({
     status: "ok",
     application: "WhatsApp Full-Stack Web Platform",
@@ -88,11 +105,11 @@ app.get("/api/health", (req, res) => {
     uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
     database: "connected",
+    version: "2.0.0",
   });
-});
+};
 
-// 2. Legacy /api/rooms endpoint
-app.get("/api/rooms", async (req, res, next) => {
+const handleRooms = async (req, res, next) => {
   try {
     const defaultChannels = await Conversation.find({ slug: { $exists: true } }).lean();
 
@@ -127,10 +144,9 @@ app.get("/api/rooms", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
+};
 
-// 3. Registered contacts directory
-app.get("/api/users", async (req, res, next) => {
+const handleUsers = async (req, res, next) => {
   try {
     const dbUsers = await User.find().select("-passwordHash").lean();
     const activeIds = new Set(Array.from(activeUsers.values()).map((u) => u.id || u.username));
@@ -152,32 +168,63 @@ app.get("/api/users", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
+};
 
-// 4. Seed endpoint
-app.post("/api/seed", (req, res) => {
+const handleSeed = (req, res) => {
   res.json({
     message: "Chat store initialized with sample rooms and messages",
     status: "success",
   });
-});
+};
 
 // ------------------------------------------------------------
-// MODULAR ROUTERS MOUNTING (Units 2, 3, 4)
+// ROUTE MOUNTING (LEGACY /api & VERSIONED /api/v1)
 // ------------------------------------------------------------
 
+// Rate limiters
+app.use("/api/auth", authLimiter);
+app.use("/api/v1/auth", authLimiter);
+app.use("/api", apiLimiter);
+app.use("/api/v1", apiLimiter);
+
+// 1. Health check & Diagnostics
+app.get("/api/health", handleHealth);
+app.get("/api/v1/health", handleHealth);
+
+// 2. Chat Rooms
+app.get("/api/rooms", handleRooms);
+app.get("/api/v1/rooms", handleRooms);
+
+// 3. User Directory
+app.get("/api/users", handleUsers);
+app.get("/api/v1/users", handleUsers);
+
+// 4. Seed endpoint
+app.post("/api/seed", handleSeed);
+app.post("/api/v1/seed", handleSeed);
+
+// 5. Modular Routers (Dual-mounted for /api and /api/v1)
 app.use("/api/auth", authRoutes);
-app.use("/api/conversations", conversationRoutes);
-app.use("/api/messages", messageRoutes);
-app.use("/api/upload", uploadRoutes);
-app.use("/api/ai", aiRoutes);
+app.use("/api/v1/auth", authRoutes);
 
-// Serve main WhatsApp Web frontend
+app.use("/api/conversations", conversationRoutes);
+app.use("/api/v1/conversations", conversationRoutes);
+
+app.use("/api/messages", messageRoutes);
+app.use("/api/v1/messages", messageRoutes);
+
+app.use("/api/upload", uploadRoutes);
+app.use("/api/v1/upload", uploadRoutes);
+
+app.use("/api/ai", aiRoutes);
+app.use("/api/v1/ai", aiRoutes);
+
+// 6. Serve main WhatsApp Web frontend
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "client.html"));
 });
 
-// 404 & Centralized Error Handlers (Unit 2 / Lab 1)
+// 7. 404 & Centralized Error Handlers (Unit 2 / Lab 1)
 app.use(notFoundHandler);
 app.use(errorHandler);
 
@@ -215,6 +262,8 @@ function listenWithFallback(port) {
     console.log(`URL: http://localhost:${port}`);
     console.log(`Socket.IO Engine: ws://localhost:${port}/`);
     console.log(`MongoDB: ${env.MONGO_URI}`);
+    console.log(`API Gateways: /api and /api/v1 (Dual Architecture)`);
+    console.log(`Security: Helmet, CORS, Rate-Limiting, Scrypt, JWT`);
     console.log(`=======================================================`);
   });
 }

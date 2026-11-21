@@ -367,8 +367,27 @@ async function runFullTestSuite() {
       });
     });
 
+    // ----------------------------------------------------------------
+    // SECTION 8: API V1 GATEWAY & OWASP SECURITY HARDENING
+    // ----------------------------------------------------------------
+    console.log(`\n[SECTION 8] API v1 Gateway & OWASP Security Hardening Verification:`);
+
+    const v1Health = await request("/api/v1/health");
+    assert(v1Health.status === 200 && v1Health.data.version === "2.0.0", "GET /api/v1/health serves versioned v1 REST API gateway");
+
+    const v1Rooms = await request("/api/v1/rooms");
+    assert(v1Rooms.status === 200 && Array.isArray(v1Rooms.data), "GET /api/v1/rooms returns active chat channels through v1 gateway");
+
+    const v1Users = await request("/api/v1/users");
+    assert(v1Users.status === 200 && Array.isArray(v1Users.data), "GET /api/v1/users returns user directory via v1 gateway");
+
+    // Security headers verification
+    const healthHeaders = v1Health.res.headers;
+    assert(healthHeaders.get("x-content-type-options") === "nosniff", "Response enforces X-Content-Type-Options: nosniff");
+    assert(healthHeaders.get("x-frame-options") === "SAMEORIGIN", "Response enforces X-Frame-Options: SAMEORIGIN");
+
     console.log(`\n======================================================================`);
-    console.log(`ALL 32 PRODUCTION & SYLLABUS VERIFICATION TEST CASES PASSED WITH 100%!`);
+    console.log(`ALL 37 PRODUCTION & SYLLABUS VERIFICATION TEST CASES PASSED WITH 100%!`);
     console.log(`======================================================================\n`);
     process.exit(0);
   } catch (error) {
