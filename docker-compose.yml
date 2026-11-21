@@ -1,0 +1,29 @@
+services:
+  whatsapp:
+    build: .
+    container_name: whatsapp_app
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    environment:
+      - PORT=5050
+      - NODE_ENV=production
+      - MONGO_URI=mongodb://mongo:27017/whatsapp_db
+      - JWT_SECRET=whatsapp_docker_production_secret_key_2026
+    depends_on:
+      - mongo
+    volumes:
+      - whatsapp_uploads:/app/uploads
+
+  mongo:
+    image: mongo:7.0
+    container_name: whatsapp_mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - whatsapp_mongodb_data:/data/db
+
+volumes:
+  whatsapp_uploads:
+  whatsapp_mongodb_data:

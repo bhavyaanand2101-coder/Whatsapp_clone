@@ -1,0 +1,209 @@
+{
+  "info": {
+    "name": "WhatsApp Full-Stack REST API Collection (Web Dev - III)",
+    "description": "Comprehensive Postman test collection for Web Dev - III Units 1-4: Auth, Users, Conversations, Messages, Uploads, RAG AI, and Health.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Health & Core",
+      "item": [
+        {
+          "name": "GET /api/health",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/health"
+          }
+        },
+        {
+          "name": "POST /api/seed",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/seed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Authentication",
+      "item": [
+        {
+          "name": "POST /api/auth/register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"student1\",\n  \"email\": \"student1@college.edu\",\n  \"password\": \"Password123!\",\n  \"displayName\": \"Student One\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/register"
+          }
+        },
+        {
+          "name": "POST /api/auth/login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"bhavya\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "GET /api/auth/me",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/auth/me"
+          }
+        },
+        {
+          "name": "POST /api/auth/refresh",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/refresh"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Conversations & Groups",
+      "item": [
+        {
+          "name": "GET /api/rooms",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/rooms"
+          }
+        },
+        {
+          "name": "GET /api/conversations",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/conversations"
+          }
+        },
+        {
+          "name": "POST /api/conversations/direct",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"{{targetUserId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/conversations/direct"
+          }
+        },
+        {
+          "name": "POST /api/conversations/groups",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Final Year Study Group\",\n  \"description\": \"Group for project preparation\",\n  \"participantIds\": [\"{{targetUserId}}\"]\n}"
+            },
+            "url": "{{baseUrl}}/api/conversations/groups"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Messages (CRUD)",
+      "item": [
+        {
+          "name": "GET /api/messages/:roomId",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/messages/general"
+          }
+        },
+        {
+          "name": "POST /api/messages",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roomId\": \"general\",\n  \"text\": \"Hello from Postman!\"\n}"
+            },
+            "url": "{{baseUrl}}/api/messages"
+          }
+        },
+        {
+          "name": "POST /api/messages/:id/react",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emoji\": \"👍\"\n}"
+            },
+            "url": "{{baseUrl}}/api/messages/{{messageId}}/react"
+          }
+        },
+        {
+          "name": "DELETE /api/messages/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deleteForEveryone\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/messages/{{messageId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Generative AI & RAG",
+      "item": [
+        {
+          "name": "POST /api/ai/query",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"Explain Web Dev 3 course outcomes\"\n}"
+            },
+            "url": "{{baseUrl}}/api/ai/query"
+          }
+        },
+        {
+          "name": "GET /api/ai/summarize/:conversationId",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/ai/summarize/general"
+          }
+        },
+        {
+          "name": "GET /api/ai/suggestions",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/ai/suggestions?messageText=Are%20we%20ready%20to%20deploy"
+          }
+        }
+      ]
+    }
+  ]
+}
