@@ -25,12 +25,14 @@ async function getConversations(req, res, next) {
 
     const formatted = conversations.map((conv) => {
       const isGroup = conv.type === "group";
-      let name = isGroup ? conv.groupMeta?.name : "Chat";
-      let avatar = isGroup ? conv.groupMeta?.avatar : "";
-      let description = isGroup ? conv.groupMeta?.description : "";
+      const isSystemChannel = Boolean(conv.slug);
+      let name = conv.groupMeta?.name || "Chat";
+      let avatar = conv.groupMeta?.avatar || "";
+      let description = conv.groupMeta?.description || "";
       let otherUser = null;
 
-      if (!isGroup && req.user && conv.participants.length > 0) {
+      // Only override name/avatar from participant if it's a real direct 1-on-1 private chat (not a system channel like meta-ai)
+      if (!isGroup && !isSystemChannel && req.user && conv.participants.length > 0) {
         const other = conv.participants.find((p) => p._id.toString() !== req.user._id.toString());
         if (other) {
           otherUser = other;
@@ -127,7 +129,7 @@ async function getConversationById(req, res, next) {
  */
 async function createDirectChat(req, res, next) {
   try {
-    const { targetUserId } = req.body;
+    const targetUserId = req.body.targetUserId || req.body.recipientId || req.body.userId;
     if (!targetUserId) {
       return apiError(res, "Target user ID is required", 400);
     }

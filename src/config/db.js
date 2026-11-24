@@ -115,7 +115,7 @@ async function seedDatabase(User, Conversation, Message) {
       });
 
       const c4 = await Conversation.create({
-        type: "direct",
+        type: "group",
         slug: "meta-ai",
         participants: allUserIds,
         admins: [adminId],

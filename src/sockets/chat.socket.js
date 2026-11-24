@@ -339,6 +339,18 @@ function setupSocketIO(io) {
 
         io.to(roomId).emit("message:receive", broadcastMsg);
         io.to(roomId).emit("message:new", broadcastMsg);
+
+        // Also ensure all conversation participants receive the message even if currently in another room
+        if (conv && Array.isArray(conv.participants)) {
+          conv.participants.forEach((p) => {
+            const pid = (p._id || p).toString();
+            if (pid !== roomId) {
+              io.to(pid).emit("message:receive", broadcastMsg);
+              io.to(pid).emit("message:new", broadcastMsg);
+            }
+          });
+        }
+
         socket.emit("message:delivered", { messageId: newMsg._id.toString(), roomId });
 
         socket.to(roomId).emit("typing:stop", {
@@ -491,39 +503,72 @@ function setupSocketIO(io) {
       }
     });
 
-    // 7. WebRTC Audio/Video Call Signaling
-    socket.on("call:initiate", (data) => {
+    // 7. WebRTC Audio/Video Call Signaling (Participant-Aware & Resilient Routing)
+    const broadcastCallEvent = async (eventName, data) => {
+      const roomId = data.roomId;
+      if (!roomId) return;
+      socket.to(roomId).emit(eventName, data);
+
+      try {
+        let conv = null;
+        if (roomId.match(/^[0-9a-fA-F]{24}$/)) {
+          conv = await Conversation.findById(roomId).lean();
+        } else if (roomId) {
+          conv = await Conversation.findOne({ slug: roomId }).lean();
+        }
+        if (conv && Array.isArray(conv.participants)) {
+          conv.participants.forEach((p) => {
+            const pid = (p._id || p).toString();
+            socket.to(pid).emit(eventName, data);
+          });
+        }
+        if (data.targetUserId) {
+          socket.to(data.targetUserId.toString()).emit(eventName, data);
+        }
+      } catch (_) {}
+    };
+
+    socket.on("call:initiate", async (data) => {
       const user = activeUsers.get(socket.id);
-      socket.to(data.roomId).emit("call:incoming", {
-        caller: user || { username: "Someone" },
-        isVideo: data.isVideo,
+      const caller = user || (socket.user ? {
+        id: socket.user._id.toString(),
+        _id: socket.user._id,
+        username: socket.user.displayName || socket.user.username,
+        avatar: socket.user.avatar,
+      } : { username: "Someone" });
+
+      const payload = {
+        caller,
+        isVideo: Boolean(data.isVideo),
         offer: data.offer,
         roomId: data.roomId,
-      });
+        targetUserId: data.targetUserId,
+      };
+      await broadcastCallEvent("call:incoming", payload);
     });
 
-    socket.on("call:answer", (data) => {
-      socket.to(data.roomId).emit("call:answered", {
+    socket.on("call:answer", async (data) => {
+      await broadcastCallEvent("call:answered", {
         answer: data.answer,
         roomId: data.roomId,
       });
     });
 
-    socket.on("call:ice_candidate", (data) => {
-      socket.to(data.roomId).emit("call:ice_candidate", {
+    socket.on("call:ice_candidate", async (data) => {
+      await broadcastCallEvent("call:ice_candidate", {
         candidate: data.candidate,
         roomId: data.roomId,
       });
     });
 
-    socket.on("call:end", (data) => {
-      socket.to(data.roomId).emit("call:ended", {
+    socket.on("call:end", async (data) => {
+      await broadcastCallEvent("call:ended", {
         roomId: data.roomId,
       });
     });
 
-    socket.on("call:reject", (data) => {
-      socket.to(data.roomId).emit("call:rejected", {
+    socket.on("call:reject", async (data) => {
+      await broadcastCallEvent("call:rejected", {
         roomId: data.roomId,
       });
     });

@@ -14,7 +14,7 @@ async function seedRichWhatsApp() {
   const usersData = [
     {
       username: "bhavya",
-      displayName: "Bhavya",
+      displayName: "@Bhavya_Anand20 (You)",
       email: "bhavya@whatsapp.local",
       phone: "+91 87999 99999",
       about: "Coding WebSockets in Sem 3",
@@ -127,39 +127,31 @@ async function seedRichWhatsApp() {
   const allUserIds = Object.values(userMap).map((u) => u._id);
   const bhavya = userMap["bhavya"];
 
-  // Seed / Update Groups matching Real WhatsApp
+  // Seed Realistic Groups (Matching macOS WhatsApp Web Desktop Screenshot)
   const groupsData = [
     {
-      slug: "btech-aiml-e",
-      name: "Btech CSE (AI-ML) Sec E",
-      description: "Web Dev-III B.tech AIML Sec- E, Design and Development",
-      avatar: "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=120&h=120&q=80",
-      lastMsgText: "Web Dev-III B.tech AIML Sec- E, Design and Development",
-      lastSender: "Aman Cr",
-    },
-    {
-      slug: "krmu-official",
+      slug: "krmu",
       name: "KRMU Student Official Communication",
-      description: "Announcements ▶ IMPORTANT NOTICE for Semester 3 Exams & Assignments",
-      avatar: "https://images.unsplash.com/photo-1541339907198-e08756dedf3f?auto=format&fit=crop&w=120&h=120&q=80",
-      lastMsgText: "Announcements ▶ IMPORTANT NOTICE: Project submission deadline is Friday",
-      lastSender: "Love Sir Web Dev",
+      description: "Official notices and college administrative updates",
+      avatar: "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=120&h=120&q=80",
+      lastMsgText: "Announcements ▶ IMPORTANT NOTICE if you haven't submitted your project...",
+      lastSender: "Admin",
     },
     {
-      slug: "alsi-log",
+      slug: "alsilog",
       name: "Alsi Log",
-      description: "College friends squad & project chill lounge",
+      description: "College gang & late night assignment discussions",
       avatar: "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=120&h=120&q=80",
       lastMsgText: "Priyanshu Pandey: webdev project.zip",
       lastSender: "Priyanshu Pandey K",
     },
     {
-      slug: "general",
-      name: "General Lounge",
-      description: "Global community chat for everyone",
-      avatar: "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=120&h=120&q=80",
-      lastMsgText: "Hello safe text",
-      lastSender: "Bhavya",
+      slug: "btech_aiml",
+      name: "Btech CSE (AI-ML) Sec E",
+      description: "Web Dev-III B.tech AIML Sec- E, Design and Development",
+      avatar: "https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=120&h=120&q=80",
+      lastMsgText: "Web Dev-III B.tech AIML Sec- E, Design an...",
+      lastSender: "Aman Cr",
     },
     {
       slug: "webdev",
@@ -178,11 +170,19 @@ async function seedRichWhatsApp() {
       lastSender: "Priya Nair",
     },
     {
+      slug: "general",
+      name: "General Lounge",
+      description: "Global community chat for everyone",
+      avatar: "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=120&h=120&q=80",
+      lastMsgText: "Hello safe text",
+      lastSender: "Bhavya",
+    },
+    {
       slug: "meta-ai",
       name: "Meta AI",
       description: "Ask anything, summarize chats, or generate smart answers",
       avatar: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=120&h=120&q=80",
-      lastMsgText: "Ask anything, summarize chats, or generate smart answers",
+      lastMsgText: "Always ready to assist with code, answers & summaries ✨",
       lastSender: "Meta AI",
     },
   ];
@@ -216,12 +216,18 @@ async function seedRichWhatsApp() {
         avatar: g.avatar,
       };
       conv.participants = Array.from(new Set([...conv.participants, ...allUserIds]));
+      conv.lastMessage = {
+        text: g.lastMsgText,
+        senderName: g.lastSender,
+        timestamp: new Date(),
+        status: "read",
+      };
       await conv.save();
       console.log(`Updated group channel: ${g.name}`);
     }
   }
 
-  // Seed / Update Direct 1-on-1 Chats between Bhavya and friends
+  // Seed / Update Direct 1-on-1 Chats between Bhavya and contacts
   const directChats = [
     { target: "bhavya_airtel", lastText: "Hello safe text", time: "12:54 PM" },
     { target: "amancr", lastText: "Ok", time: "12:57 PM" },
@@ -270,26 +276,113 @@ async function seedRichWhatsApp() {
       console.log(`Updated direct conversation: Bhavya <-> ${targetUser.displayName}`);
     }
 
-    // Add initial message so conversation has message history
-    const existingMsg = await Message.findOne({ conversationId: conv._id });
-    if (!existingMsg) {
-      await Message.create({
-        conversationId: conv._id,
-        sender: {
-          id: targetUser._id.toString(),
-          userId: targetUser._id,
-          username: targetUser.displayName,
-          phone: targetUser.phone,
-          avatar: targetUser.avatar,
-        },
-        text: d.lastText,
-        status: "read",
-        createdAt: new Date(),
-      });
+    // Populate rich sample message history for Bhavya Airtel
+    if (d.target === "bhavya_airtel") {
+      const existingCount = await Message.countDocuments({ conversationId: conv._id });
+      if (existingCount < 3) {
+        await Message.deleteMany({ conversationId: conv._id });
+
+        // 1. Rich link preview message (Instagram photo / fitness post)
+        await Message.create({
+          conversationId: conv._id,
+          sender: {
+            id: targetUser._id.toString(),
+            userId: targetUser._id,
+            username: targetUser.displayName,
+            phone: targetUser.phone,
+            avatar: targetUser.avatar,
+          },
+          text: "Rahul Kumar on Instagram: \"Your everyday Indian kitchen may be more nutrient-dense than you think. 🍃 Follow @coach_rahul07 for more. #coach_rahul07 #nutrientes #diet #healthyfood #fitness\"\nhttps://instagram.com",
+          linkPreview: {
+            url: "https://instagram.com",
+            title: "Rahul Kumar on Instagram",
+            description: "Your everyday Indian kitchen may be more nutrient-dense than you think. 🍃 Follow @coach_rahul07 for more. #coach_rahul07 #nutrientes #diet #healthyfood #fitness",
+            image: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=500&h=280&q=80",
+          },
+          status: "read",
+          createdAt: new Date(Date.now() - 3600000 * 2),
+        });
+
+        // 2. Document message (DSA MCQ Practice Set PDF)
+        await Message.create({
+          conversationId: conv._id,
+          sender: {
+            id: bhavya._id.toString(),
+            userId: bhavya._id,
+            username: bhavya.displayName,
+            phone: bhavya.phone,
+            avatar: bhavya.avatar,
+          },
+          text: "DSA MCQ Practice Set",
+          mediaType: "document",
+          mediaUrl: "/uploads/DSA_MCQ_Sessions_1-8.pdf",
+          mediaName: "DSA_MCQ_Sessions_1-8.pdf",
+          mediaSize: 81920, // 80 KB
+          mediaMeta: {
+            pages: 10,
+            extension: "pdf",
+          },
+          status: "read",
+          createdAt: new Date(Date.now() - 3600000),
+        });
+
+        // 3. Voice call card
+        await Message.create({
+          conversationId: conv._id,
+          sender: {
+            id: targetUser._id.toString(),
+            userId: targetUser._id,
+            username: targetUser.displayName,
+            phone: targetUser.phone,
+            avatar: targetUser.avatar,
+          },
+          text: "Voice call",
+          callInfo: {
+            callType: "voice",
+            status: "No answer",
+            duration: "0s",
+            time: "11:43 AM",
+          },
+          status: "read",
+          createdAt: new Date(Date.now() - 1800000),
+        });
+
+        // 4. Safe text message
+        await Message.create({
+          conversationId: conv._id,
+          sender: {
+            id: bhavya._id.toString(),
+            userId: bhavya._id,
+            username: bhavya.displayName,
+            phone: bhavya.phone,
+            avatar: bhavya.avatar,
+          },
+          text: "<script>alert('xss')</script>Hello safe text",
+          status: "read",
+          createdAt: new Date(Date.now() - 600000),
+        });
+      }
+    } else {
+      const existingMsg = await Message.findOne({ conversationId: conv._id });
+      if (!existingMsg) {
+        await Message.create({
+          conversationId: conv._id,
+          sender: {
+            id: targetUser._id.toString(),
+            userId: targetUser._id,
+            username: targetUser.displayName,
+            phone: targetUser.phone,
+            avatar: targetUser.avatar,
+          },
+          text: d.lastText,
+          status: "read",
+          createdAt: new Date(),
+        });
+      }
     }
   }
 
-  console.log("Rich WhatsApp contacts and groups seeded successfully!");
+  console.log("Rich WhatsApp contacts, groups, and message items seeded successfully!");
   process.exit(0);
 }
 
