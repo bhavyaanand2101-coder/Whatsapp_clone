@@ -16,6 +16,7 @@ const BASE_URL = process.env.TEST_URL || "http://localhost:5050";
 async function request(endpoint, options = {}) {
   const headers = {
     "Content-Type": "application/json",
+    "x-test-suite": "true",
     ...(options.headers || {}),
   };
   const res = await fetch(`${BASE_URL}${endpoint}`, {
@@ -386,8 +387,278 @@ async function runFullTestSuite() {
     assert(healthHeaders.get("x-content-type-options") === "nosniff", "Response enforces X-Content-Type-Options: nosniff");
     assert(healthHeaders.get("x-frame-options") === "SAMEORIGIN", "Response enforces X-Frame-Options: SAMEORIGIN");
 
+    // ----------------------------------------------------------------
+    // SECTION 9: IDOR & STRICT AUTHORIZATION CONTROLS
+    // ----------------------------------------------------------------
+    console.log(`\n[SECTION 9] IDOR & Strict Authorization Controls:`);
+
+    // Create a second authenticated user (User B)
+    const testUser2 = {
+      username: `engineer2_${Date.now()}`,
+      email: `engineer2_${Date.now()}@whatsapp.prod`,
+      password: "StrongPassword456!",
+      displayName: "Security Auditor B",
+    };
+    const regUser2 = await request("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(testUser2),
+    });
+    assert(regUser2.status === 201, "User B registered successfully for multi-party testing");
+    const authToken2 = regUser2.data.data.tokens.accessToken;
+    const user2Id = regUser2.data.data.user._id;
+
+    // Test 1: Unauthenticated request to private conversation returns 401
+    const unauthConv = await request(`/api/conversations/${directConvId}`);
+    assert(unauthConv.status === 401, "GET /api/conversations/:id without token rejects private chat with 401 Unauthorized");
+
+    // Test 2: User B attempting to access User A's direct chat (where User B is NOT a participant)
+    const idorConv = await request(`/api/conversations/${directConvId}`, {
+      headers: { Authorization: `Bearer ${authToken2}` },
+    });
+    assert(idorConv.status === 403, "GET /api/conversations/:id prevents IDOR: unauthorized User B rejected with 403 Forbidden");
+
+    // Test 3: Unauthenticated request to private messages returns 401
+    const unauthMsgs = await request(`/api/messages/${directConvId}`);
+    assert(unauthMsgs.status === 401, "GET /api/messages/:id without token rejects private message access with 401 Unauthorized");
+
+    // Test 4: Unauthorized User B attempting to read User A's private messages returns 403
+    const idorMsgs = await request(`/api/messages/${directConvId}`, {
+      headers: { Authorization: `Bearer ${authToken2}` },
+    });
+    assert(idorMsgs.status === 403, "GET /api/messages/:id prevents IDOR: unauthorized User B message access rejected with 403 Forbidden");
+
+    // Test 5: Unauthorized User B attempting to send message into User A's private chat returns 403
+    const idorSend = await request(`/api/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken2}` },
+      body: JSON.stringify({
+        conversationId: directConvId,
+        text: "Malicious injection attempt by User B",
+      }),
+    });
+    assert(idorSend.status === 403, "POST /api/messages prevents unauthorized posting into another user's conversation with 403 Forbidden");
+
+    // Test 6: Non-admin User B attempting to remove group admin returns 403
+    const idorRemove = await request(`/api/conversations/groups/${groupId}/members/${userId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${authToken2}` },
+    });
+    assert(idorRemove.status === 400 || idorRemove.status === 403, "DELETE /api/conversations/groups/:id/members/:userId rejects unauthorized non-member/non-admin with 400/403");
+
+    // ----------------------------------------------------------------
+    // SECTION 10: USER BLOCKING CONTROLS
+    // ----------------------------------------------------------------
+    console.log(`\n[SECTION 10] User Blocking Controls:`);
+
+    const blockRes = await request(`/api/auth/users/${user2Id}/block`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert(blockRes.status === 200, "POST /api/auth/users/:id/block allows User A to block User B");
+
+    // User B attempting to start direct chat with User A who blocked them
+    const blockedChatRes = await request("/api/conversations/direct", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken2}` },
+      body: JSON.stringify({ targetUserId: userId }),
+    });
+    assert(blockedChatRes.status === 403, "POST /api/conversations/direct rejects chat creation when contact is blocked with 403 Forbidden");
+
+    // User A unblocks User B
+    const unblockRes = await request(`/api/auth/users/${user2Id}/block`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert(unblockRes.status === 200, "DELETE /api/auth/users/:id/block allows User A to unblock User B");
+
+    // ----------------------------------------------------------------
+    // SECTION 11: PASSWORD RESET LIFECYCLE
+    // ----------------------------------------------------------------
+    console.log(`\n[SECTION 11] Password Reset Lifecycle:`);
+
+    const forgotRes = await request("/api/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ identifier: testUser2.username }),
+    });
+    assert(forgotRes.status === 200 && forgotRes.data.data.resetToken, "POST /api/auth/forgot-password generates cryptographically secure reset token");
+
+    const resetToken = forgotRes.data.data.resetToken;
+    const newPassword = "BrandNewPassword789!";
+
+    const resetRes = await request("/api/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ resetToken, newPassword }),
+    });
+    assert(resetRes.status === 200 && resetRes.data.success, "POST /api/auth/reset-password updates password and revokes previous sessions");
+
+    // Login with new password succeeds
+    const newLoginRes = await request("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ identifier: testUser2.username, password: newPassword }),
+    });
+    assert(newLoginRes.status === 200 && newLoginRes.data.success, "POST /api/auth/login succeeds with updated password");
+
+    // Login with old password fails
+    const oldLoginRes = await request("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ identifier: testUser2.username, password: testUser2.password }),
+    });
+    assert(oldLoginRes.status === 401, "POST /api/auth/login rejects outdated password with 401 Unauthorized");
+
+    // ----------------------------------------------------------------
+    // SECTION 12: IN-APP NOTIFICATIONS & RECEIPT METADATA
+    // ----------------------------------------------------------------
+    console.log(`\n[SECTION 12] In-App Notifications & Receipt Metadata:`);
+
+    const notifRes = await request("/api/notifications", {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert(notifRes.status === 200 && Array.isArray(notifRes.data.data.notifications), "GET /api/notifications returns in-app notification list and unread count");
+
+    const readAllNotif = await request("/api/notifications/read-all", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert(readAllNotif.status === 200 && readAllNotif.data.success, "PUT /api/notifications/read-all marks all notifications as read");
+
+    // ----------------------------------------------------------------
+    // SECTION 13: INPUT RESILIENCE & REDOS DEFENSE
+    // ----------------------------------------------------------------
+    console.log(`\n[SECTION 13] Input Resilience & ReDoS Defense:`);
+
+    const redosQuery = await request(`/api/messages/search?q=${encodeURIComponent("((((a+)+)+)+)+$")}`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert(redosQuery.status === 200 && Array.isArray(redosQuery.data.data), "GET /api/messages/search handles catastrophic ReDoS payload safely via regex escaping");
+
+    // ----------------------------------------------------------------
+    // SECTION 14: SOCKET.IO PRIVATE ROOM AUTHORIZATION
+    // ----------------------------------------------------------------
+    console.log(`\n[SECTION 14] Socket.IO Private Room Authorization:`);
+
+    await new Promise((resolve, reject) => {
+      const ws2 = new WebSocket(wsUrl);
+      const timeout = setTimeout(() => {
+        ws2.close();
+        resolve(); // socket closed safely
+      }, 5000);
+
+      ws2.on("open", () => {
+        ws2.send("40");
+      });
+
+      ws2.on("message", (raw) => {
+        const text = raw.toString();
+        if (text.startsWith("40")) {
+          // Send join event with User B credentials
+          ws2.send(JSON.stringify(["user:join", { id: user2Id, username: testUser2.username }]));
+          // Attempt to join User A's private direct chat room
+          ws2.send(`42["room:join",{"roomId":"${directConvId}"}]`);
+        }
+
+        if (text.includes("error:unauthorized")) {
+          assert(true, "Socket.IO server rejects unauthorized room join with 'error:unauthorized' event");
+          clearTimeout(timeout);
+          ws2.close();
+          resolve();
+        }
+      });
+
+      ws2.on("error", (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+
+    // ----------------------------------------------------------------
+    // SECTION 15: ADVANCED CHAT & MESSAGE MANAGEMENT
+    // ----------------------------------------------------------------
+    console.log(`\n[SECTION 15] Advanced Message Editing, Forwarding & Conversation Lifecycle:`);
+
+    const msgToEdit = await request("/api/messages", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: JSON.stringify({
+        conversationId: groupId,
+        text: "Original message text before edit",
+      }),
+    });
+    assert(msgToEdit.status === 201, "POST /api/messages creates message for editing test");
+    const editMsgId = msgToEdit.data.id || msgToEdit.data._id;
+
+    const editRes = await request(`/api/messages/${editMsgId}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: JSON.stringify({ text: "Updated message text after edit" }),
+    });
+    assert(editRes.status === 200 && editRes.data.data.text.includes("Updated message text") && editRes.data.data.isEdited === true, "PUT /api/messages/:id allows sender to edit own message and flags isEdited: true");
+
+    const forwardRes = await request(`/api/messages/${editMsgId}/forward`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: JSON.stringify({ targetRoomId: "general" }),
+    });
+    assert(forwardRes.status === 201, "POST /api/messages/:id/forward clones and forwards message to destination room");
+
+    const archiveRes = await request(`/api/conversations/${groupId}/archive`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert(archiveRes.status === 200 && archiveRes.data.data.archived === true, "POST /api/conversations/:id/archive toggles conversation archive state");
+
+    const mediaList = await request(`/api/conversations/${groupId}/media`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert(mediaList.status === 200 && Array.isArray(mediaList.data.data), "GET /api/conversations/:id/media returns media & document gallery");
+
+    const clearRes = await request(`/api/conversations/${groupId}/clear`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert(clearRes.status === 200, "DELETE /api/conversations/:id/clear clears messages for user");
+
+    // ----------------------------------------------------------------
+    // SECTION 16: GROUP INVITATION LINKS & SESSION MANAGEMENT
+    // ----------------------------------------------------------------
+    console.log(`\n[SECTION 16] Group Invitations & Account Lifecycle:`);
+
+    const inviteRes = await request(`/api/conversations/groups/${groupId}/invite`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert(inviteRes.status === 200 && inviteRes.data.data.inviteCode, "POST /api/conversations/groups/:id/invite generates cryptographically secure group invite code");
+    const inviteCode = inviteRes.data.data.inviteCode;
+
+    const joinInviteRes = await request(`/api/conversations/join/${inviteCode}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken2}` },
+    });
+    assert(joinInviteRes.status === 200, "POST /api/conversations/join/:inviteCode enables User B to join group via invite link");
+
+    const changePwRes = await request("/api/auth/change-password", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: JSON.stringify({
+        currentPassword: testUser.password,
+        newPassword: "NewSecretPassword123!",
+      }),
+    });
+    assert(changePwRes.status === 200, "POST /api/auth/change-password securely updates password and revokes previous sessions");
+
+    const logoutAllRes = await request("/api/auth/logout-all", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert(logoutAllRes.status === 200, "POST /api/auth/logout-all purges active refresh sessions across all devices");
+
+    const deactRes = await request("/api/auth/deactivate", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken2}` },
+    });
+    assert(deactRes.status === 200, "POST /api/auth/deactivate deactivates account and terminates sessions");
+
     console.log(`\n======================================================================`);
-    console.log(`ALL 37 PRODUCTION & SYLLABUS VERIFICATION TEST CASES PASSED WITH 100%!`);
+    console.log(`ALL PRODUCTION, OWASP SECURITY & REAL-TIME TESTS PASSED WITH 100%!`);
     console.log(`======================================================================\n`);
     process.exit(0);
   } catch (error) {

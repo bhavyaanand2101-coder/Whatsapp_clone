@@ -28,10 +28,12 @@ async function getConversations(req, res, next) {
       let name = isGroup ? conv.groupMeta?.name : "Chat";
       let avatar = isGroup ? conv.groupMeta?.avatar : "";
       let description = isGroup ? conv.groupMeta?.description : "";
+      let otherUser = null;
 
       if (!isGroup && req.user && conv.participants.length > 0) {
         const other = conv.participants.find((p) => p._id.toString() !== req.user._id.toString());
         if (other) {
+          otherUser = other;
           name = other.displayName || other.username;
           avatar = other.avatar;
           description = other.about;
@@ -55,6 +57,15 @@ async function getConversations(req, res, next) {
           avatar ||
           "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=120&h=120&q=80",
         description: description || "",
+        phone: otherUser ? otherUser.phone : "",
+        otherUser: otherUser ? {
+          id: otherUser._id,
+          username: otherUser.username,
+          displayName: otherUser.displayName,
+          phone: otherUser.phone,
+          avatar: otherUser.avatar,
+          about: otherUser.about,
+        } : null,
         participants: conv.participants,
         admins: conv.admins,
         lastMessage: conv.lastMessage,
@@ -93,9 +104,12 @@ async function getConversationById(req, res, next) {
       return apiError(res, "Conversation not found", 404);
     }
 
-    if (!conv.slug && req.user) {
+    if (!conv.slug) {
+      if (!req.user) {
+        return apiError(res, "Authentication required to view this conversation", 401);
+      }
       const isMember = conv.participants.some(
-        (p) => p._id.toString() === req.user._id.toString()
+        (p) => (p._id || p).toString() === req.user._id.toString()
       );
       if (!isMember) {
         return apiError(res, "You are not authorized to view this conversation", 403);
@@ -125,6 +139,17 @@ async function createDirectChat(req, res, next) {
     const targetUser = await User.findById(targetUserId);
     if (!targetUser) {
       return apiError(res, "Target user does not exist", 404);
+    }
+
+    // Check blocking relations
+    const meBlockedByTarget = targetUser.blockedUsers && targetUser.blockedUsers.some(
+      (b) => b.toString() === req.user._id.toString()
+    );
+    const targetBlockedByMe = req.user.blockedUsers && req.user.blockedUsers.some(
+      (b) => b.toString() === targetUser._id.toString()
+    );
+    if (meBlockedByTarget || targetBlockedByMe) {
+      return apiError(res, "Cannot start conversation: one of the users has blocked the other", 403);
     }
 
     let conv = await Conversation.findOne({
@@ -210,6 +235,13 @@ async function updateGroup(req, res, next) {
       return apiError(res, "Group not found", 404);
     }
 
+    const isMember = group.participants.some(
+      (p) => p.toString() === req.user._id.toString()
+    );
+    if (!isMember) {
+      return apiError(res, "You are not a member of this group", 400);
+    }
+
     const isAdmin = group.admins.some((a) => a.toString() === req.user._id.toString());
     if (!isAdmin) {
       return apiError(res, "Only group administrators can modify group settings", 403);
@@ -244,6 +276,13 @@ async function addGroupMembers(req, res, next) {
       return apiError(res, "Group not found", 404);
     }
 
+    const isMember = group.participants.some(
+      (p) => p.toString() === req.user._id.toString()
+    );
+    if (!isMember) {
+      return apiError(res, "You are not a member of this group", 400);
+    }
+
     const isAdmin = group.admins.some((a) => a.toString() === req.user._id.toString());
     if (!isAdmin) {
       return apiError(res, "Only group administrators can add participants", 403);
@@ -275,6 +314,13 @@ async function removeGroupMember(req, res, next) {
       return apiError(res, "Group not found", 404);
     }
 
+    const isMember = group.participants.some(
+      (p) => p.toString() === req.user._id.toString()
+    );
+    if (!isMember) {
+      return apiError(res, "You are not a member of this group", 400);
+    }
+
     const isAdmin = group.admins.some((a) => a.toString() === req.user._id.toString());
     if (!isAdmin) {
       return apiError(res, "Only group administrators can remove participants", 403);
@@ -302,6 +348,13 @@ async function leaveGroup(req, res, next) {
     const group = await Conversation.findById(id);
     if (!group || group.type !== "group") {
       return apiError(res, "Group not found", 404);
+    }
+
+    const isMember = group.participants.some(
+      (p) => p.toString() === req.user._id.toString()
+    );
+    if (!isMember) {
+      return apiError(res, "You are not a member of this group", 400);
     }
 
     group.participants = group.participants.filter(
@@ -370,6 +423,196 @@ async function muteConversation(req, res, next) {
   }
 }
 
+/**
+ * Toggle archive conversation
+ */
+async function archiveConversation(req, res, next) {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(req.user._id);
+
+    const isArchived = user.archivedConversations?.some((a) => a.toString() === id.toString());
+    if (isArchived) {
+      user.archivedConversations = user.archivedConversations.filter(
+        (a) => a.toString() !== id.toString()
+      );
+    } else {
+      if (!user.archivedConversations) user.archivedConversations = [];
+      user.archivedConversations.push(id);
+    }
+
+    await user.save();
+    return apiSuccess(res, { archived: !isArchived }, !isArchived ? "Archived" : "Unarchived");
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Clear chat messages for current user
+ */
+async function clearChat(req, res, next) {
+  try {
+    const { id } = req.params;
+    let conv = null;
+    if (id.match(/^[0-9a-fA-F]{24}$/)) {
+      conv = await Conversation.findById(id);
+    } else {
+      conv = await Conversation.findOne({ slug: id });
+    }
+
+    const query = conv ? { conversationId: conv._id } : { roomId: id };
+    await Message.updateMany(query, {
+      $addToSet: { deletedFor: req.user._id },
+    });
+
+    return apiSuccess(res, null, "Chat cleared successfully");
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Delete conversation
+ */
+async function deleteConversation(req, res, next) {
+  try {
+    const { id } = req.params;
+    const conv = await Conversation.findById(id);
+    if (!conv) {
+      return apiError(res, "Conversation not found", 404);
+    }
+
+    if (conv.type === "group") {
+      const isAdmin = conv.admins.some((a) => a.toString() === req.user._id.toString());
+      if (isAdmin) {
+        await Message.deleteMany({ conversationId: conv._id });
+        await Conversation.findByIdAndDelete(id);
+        return apiSuccess(res, null, "Group conversation permanently deleted");
+      } else {
+        conv.participants = conv.participants.filter(
+          (p) => p.toString() !== req.user._id.toString()
+        );
+        await conv.save();
+        return apiSuccess(res, null, "Left group conversation");
+      }
+    } else {
+      conv.participants = conv.participants.filter(
+        (p) => p.toString() !== req.user._id.toString()
+      );
+      if (conv.participants.length === 0) {
+        await Message.deleteMany({ conversationId: conv._id });
+        await Conversation.findByIdAndDelete(id);
+      } else {
+        await conv.save();
+      }
+      return apiSuccess(res, null, "Conversation deleted");
+    }
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Get or generate group invitation link
+ */
+async function getGroupInviteLink(req, res, next) {
+  try {
+    const { id } = req.params;
+    const group = await Conversation.findById(id);
+    if (!group || group.type !== "group") {
+      return apiError(res, "Group not found", 404);
+    }
+
+    const isMember = group.participants.some(
+      (p) => p.toString() === req.user._id.toString()
+    );
+    if (!isMember) {
+      return apiError(res, "You are not a member of this group", 403);
+    }
+
+    if (!group.inviteCode) {
+      const crypto = require("crypto");
+      group.inviteCode = crypto.randomBytes(6).toString("hex");
+      await group.save();
+    }
+
+    return apiSuccess(
+      res,
+      {
+        inviteCode: group.inviteCode,
+        inviteUrl: `/join/${group.inviteCode}`,
+      },
+      "Invite link retrieved"
+    );
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Join group using invite code
+ */
+async function joinGroupByInvite(req, res, next) {
+  try {
+    const { inviteCode } = req.params;
+    const group = await Conversation.findOne({ inviteCode, type: "group" });
+    if (!group) {
+      return apiError(res, "Invalid or expired invite link", 404);
+    }
+
+    const isMember = group.participants.some(
+      (p) => p.toString() === req.user._id.toString()
+    );
+    if (isMember) {
+      return apiSuccess(res, group, "Already a member of this group");
+    }
+
+    group.participants.push(req.user._id);
+    await group.save();
+
+    const populated = await Conversation.findById(group._id)
+      .populate("participants", "-passwordHash")
+      .populate("admins", "-passwordHash");
+
+    return apiSuccess(res, populated, "Joined group successfully", 200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Get media and document attachments in conversation
+ */
+async function getConversationMedia(req, res, next) {
+  try {
+    const { id } = req.params;
+    let conv = null;
+    if (id.match(/^[0-9a-fA-F]{24}$/)) {
+      conv = await Conversation.findById(id);
+    } else {
+      conv = await Conversation.findOne({ slug: id });
+    }
+
+    const query = conv ? { conversationId: conv._id } : { roomId: id };
+    query.mediaUrl = { $ne: null };
+    query.isDeletedForEveryone = false;
+
+    if (req.user) {
+      query.deletedFor = { $ne: req.user._id };
+    }
+
+    const media = await Message.find(query)
+      .select("text mediaType mediaUrl mediaName mediaSize sender createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return apiSuccess(res, media);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getConversations,
   getConversationById,
@@ -381,4 +624,10 @@ module.exports = {
   leaveGroup,
   pinConversation,
   muteConversation,
+  archiveConversation,
+  clearChat,
+  deleteConversation,
+  getGroupInviteLink,
+  joinGroupByInvite,
+  getConversationMedia,
 };

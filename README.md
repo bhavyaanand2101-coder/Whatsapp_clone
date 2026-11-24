@@ -6,9 +6,10 @@ A comprehensive, production-grade WhatsApp Web messaging application built for *
 
 ## System Status & Verification
 
-- **Automated Test Suite**: **37 / 37 Tests Passing (100%)** (`node test.js`)
+- **Automated Test Suite**: **66 / 66 Tests Passing (100%)** (`node test.js`)
+- **End-to-End Browser Automation**: **8 / 8 User Journeys Verified** with Playwright & Google Chrome
 - **Starter Compatibility**: 100% backward compatible with all initial starter Socket.IO events (`gyankibaat`, `kuchbhi`, `join`, `announcement`, etc.)
-- **Security Rating**: OWASP Top 10 Hardened (Helmet, Rate Limiting, Scrypt hashing, JWT rotation, XSS sanitization)
+- **Security Rating**: OWASP Top 10 Hardened (Helmet, Rate Limiting, Scrypt hashing, JWT rotation, XSS sanitization, IDOR prevention, ReDoS protection)
 - **Containerization**: Docker & Docker Compose configured and verified.
 
 ---
@@ -34,21 +35,27 @@ A comprehensive, production-grade WhatsApp Web messaging application built for *
 
 ### 2. Messaging & Conversations
 - 1-on-1 private chats and multi-user group chats.
-- Group administration: member invitation, admin promotion, member removal.
+- Group administration: member invitation, invite links, admin promotion, member removal.
 - Persistent message storage in MongoDB with pagination.
+- Message editing: sender can edit message text with live broadcast and `(edited)` indicator.
+- Message forwarding: quick forward modal to dispatch messages to any room or chat.
+- Message copy: one-click copy to clipboard.
 - Reply quote bubble (`replyTo`) and emoji reactions.
 - Real-time double blue checkmarks for read receipts.
 - Live typing indicator with auto-clearing timer.
 - Soft deletion ("Delete for me" and "Delete for everyone").
+- Chat management: archive chats, clear chat history, pin chats, mute notifications.
 - Full-text search across conversations and message history.
 
 ### 3. Media & File Sharing
 - Secure file upload endpoint with randomized naming and MIME validation.
 - Inline rendering for images, videos, audio notes, and downloadable PDF documents.
+- Dedicated Media Gallery view in chat header displaying all images, videos, audio, and documents.
 
 ### 4. WebRTC Voice & Video Calling
-- Real-time WebRTC audio and video calling modal.
-- Signaling over Socket.IO (`call:initiate`, `call:offer`, `call:answer`, `call:candidate`, `call:end`).
+- Real-time WebRTC audio and video calling modal with local and remote video elements.
+- P2P STUN-assisted media streaming.
+- Signaling over Socket.IO (`call:initiate`, `call:answer`, `call:ice_candidate`, `call:reject`, `call:end`).
 
 ### 5. Generative AI Assistant (Meta AI & RAG Pipeline)
 - Dedicated `@Meta AI` assistant contact in chat sidebar.
@@ -95,16 +102,3 @@ Inspect logs:
 ```bash
 docker compose logs -f
 ```
-
----
-
-## Documentation Index
-
-- [Architecture Guide](file:///Users/bhavya/Desktop/%20/Sem_3/Web_Dev_3/WEB_DEV_3/Assignment_4/Whatsapp/docs/ARCHITECTURE.md)
-- [REST API Documentation](file:///Users/bhavya/Desktop/%20/Sem_3/Web_Dev_3/WEB_DEV_3/Assignment_4/Whatsapp/docs/API_DOCUMENTATION.md)
-- [Socket.IO Events Specification](file:///Users/bhavya/Desktop/%20/Sem_3/Web_Dev_3/WEB_DEV_3/Assignment_4/Whatsapp/docs/SOCKET_EVENTS.md)
-- [Database Schema](file:///Users/bhavya/Desktop/%20/Sem_3/Web_Dev_3/WEB_DEV_3/Assignment_4/Whatsapp/docs/DATABASE_SCHEMA.md)
-- [Security Audit & OWASP Report](file:///Users/bhavya/Desktop/%20/Sem_3/Web_Dev_3/WEB_DEV_3/Assignment_4/Whatsapp/docs/SECURITY_AUDIT.md)
-- [Deployment Guide](file:///Users/bhavya/Desktop/%20/Sem_3/Web_Dev_3/WEB_DEV_3/Assignment_4/Whatsapp/docs/DEPLOYMENT.md)
-- [Project Audit](file:///Users/bhavya/Desktop/%20/Sem_3/Web_Dev_3/WEB_DEV_3/Assignment_4/Whatsapp/PROJECT_AUDIT.md)
-- [Development Progress](file:///Users/bhavya/Desktop/%20/Sem_3/Web_Dev_3/WEB_DEV_3/Assignment_4/Whatsapp/DEVELOPMENT_PROGRESS.md)

@@ -1,6 +1,8 @@
 const User = require("../models/User");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
+const MessageReceipt = require("../models/MessageReceipt");
+const Notification = require("../models/Notification");
 const { verifyToken } = require("../utils/cryptoAuth");
 const { sanitizeText } = require("../utils/sanitize");
 const aiService = require("../services/ai.service");
@@ -121,6 +123,11 @@ function setupSocketIO(io) {
         });
 
         io.emit("users:update", Array.from(activeUsers.values()));
+        socket.broadcast.emit("user:online", {
+          userId: userProfile.id,
+          _id: userProfile._id,
+          username: userProfile.username,
+        });
         io.emit("announcement", `${userProfile.username} joined WhatsApp`);
       } catch (err) {
         console.error("[Socket.IO] Error in user:join:", err);
@@ -133,16 +140,37 @@ function setupSocketIO(io) {
         const user = activeUsers.get(socket.id);
         if (!user) return;
 
-        socket.leave(user.currentRoom);
-        socket.join(roomId);
-        user.currentRoom = roomId;
-
         let conv = null;
         if (roomId.match(/^[0-9a-fA-F]{24}$/)) {
           conv = await Conversation.findById(roomId);
         } else {
           conv = await Conversation.findOne({ slug: roomId });
         }
+
+        // Authorize private conversation membership
+        if (conv && !conv.slug) {
+          const userIdStr = socket.user
+            ? socket.user._id.toString()
+            : user && user._id
+            ? user._id.toString()
+            : user
+            ? user.id
+            : null;
+          const isMember = conv.participants.some(
+            (p) => (p._id || p).toString() === userIdStr
+          );
+          if (!isMember) {
+            socket.emit("error:unauthorized", {
+              message: "You are not authorized to join this conversation room",
+              roomId,
+            });
+            return;
+          }
+        }
+
+        socket.leave(user.currentRoom);
+        socket.join(roomId);
+        user.currentRoom = roomId;
 
         let history = [];
         if (conv) {
@@ -212,6 +240,27 @@ function setupSocketIO(io) {
           });
         }
 
+        // Authorize private conversation sender
+        if (conv && !conv.slug) {
+          const userIdStr = socket.user
+            ? socket.user._id.toString()
+            : user && user._id
+            ? user._id.toString()
+            : user
+            ? user.id
+            : null;
+          const isMember = conv.participants.some(
+            (p) => (p._id || p).toString() === userIdStr
+          );
+          if (!isMember) {
+            socket.emit("error:unauthorized", {
+              message: "You are not a participant of this conversation",
+              roomId,
+            });
+            return;
+          }
+        }
+
         const senderData = {
           id: user ? user.id : socket.id,
           userId: user && user._id ? user._id : null,
@@ -233,6 +282,30 @@ function setupSocketIO(io) {
           replyTo: data.replyTo || null,
           status: "delivered",
         });
+
+        // Persist receipts and notifications for participants
+        if (conv && conv.participants && conv.participants.length > 0) {
+          const recipientIds = conv.participants.filter(
+            (p) => (p._id || p).toString() !== senderData.id && (!senderData.userId || (p._id || p).toString() !== senderData.userId.toString())
+          );
+          for (const recId of recipientIds) {
+            MessageReceipt.create({
+              messageId: newMsg._id,
+              recipientId: recId,
+              status: "delivered",
+              deliveredAt: new Date(),
+            }).catch(() => {});
+
+            Notification.create({
+              recipient: recId,
+              sender: senderData.userId || null,
+              type: "message",
+              title: `New message from ${senderData.username}`,
+              body: cleanText.substring(0, 80),
+              conversationId: conv._id,
+            }).catch(() => {});
+          }
+        }
 
         await Conversation.updateOne(
           { _id: conv._id },
@@ -265,6 +338,8 @@ function setupSocketIO(io) {
         };
 
         io.to(roomId).emit("message:receive", broadcastMsg);
+        io.to(roomId).emit("message:new", broadcastMsg);
+        socket.emit("message:delivered", { messageId: newMsg._id.toString(), roomId });
 
         socket.to(roomId).emit("typing:stop", {
           userId: user ? user.id : socket.id,
@@ -362,6 +437,15 @@ function setupSocketIO(io) {
 
         if (messageId.match(/^[0-9a-fA-F]{24}$/)) {
           await Message.findByIdAndUpdate(messageId, { status: "read" });
+          const user = activeUsers.get(socket.id);
+          const uid = socket.user?._id || user?._id || null;
+          if (uid) {
+            await MessageReceipt.findOneAndUpdate(
+              { messageId, recipientId: uid },
+              { status: "read", readAt: new Date() },
+              { upsert: true }
+            );
+          }
         }
 
         io.to(roomId).emit("message:status_updated", { messageId, status: "read" });
@@ -438,7 +522,93 @@ function setupSocketIO(io) {
       });
     });
 
-    // 8. Disconnect lifecycle
+    socket.on("call:reject", (data) => {
+      socket.to(data.roomId).emit("call:rejected", {
+        roomId: data.roomId,
+      });
+    });
+
+    // 8. Group updates
+    socket.on("group:update", (data) => {
+      if (data && data.roomId) {
+        io.to(data.roomId).emit("group:updated", data);
+      }
+    });
+
+    // 9. Real-time message editing
+    socket.on("message:edit", async ({ messageId, roomId, text }) => {
+      try {
+        if (!messageId || !text || !text.trim()) return;
+        const msg = await Message.findById(messageId);
+        if (!msg) return;
+
+        const user = activeUsers.get(socket.id);
+        const userId = socket.user?._id || user?._id || user?.id;
+        const isSender =
+          (msg.sender?.userId && msg.sender.userId.toString() === userId?.toString()) ||
+          msg.sender?.id === userId?.toString() ||
+          msg.sender?.username === user?.username;
+
+        if (!isSender) {
+          socket.emit("error:unauthorized", { message: "Only sender can edit message" });
+          return;
+        }
+
+        msg.text = sanitizeText(text.trim());
+        msg.isEdited = true;
+        await msg.save();
+
+        io.to(roomId).emit("message:edited", {
+          messageId: msg._id.toString(),
+          id: msg._id.toString(),
+          text: msg.text,
+          isEdited: true,
+          roomId,
+        });
+      } catch (err) {
+        console.error("[Socket.IO] Error in message:edit:", err);
+      }
+    });
+
+    // 10. Real-time message deletion
+    socket.on("message:delete", async ({ messageId, roomId, deleteForEveryone = true }) => {
+      try {
+        if (!messageId) return;
+        const msg = await Message.findById(messageId);
+        if (!msg) return;
+
+        const user = activeUsers.get(socket.id);
+        const userId = socket.user?._id || user?._id || user?.id;
+
+        if (deleteForEveryone) {
+          const isSender =
+            (msg.sender?.userId && msg.sender.userId.toString() === userId?.toString()) ||
+            msg.sender?.id === userId?.toString() ||
+            msg.sender?.username === user?.username;
+
+          if (!isSender) {
+            socket.emit("error:unauthorized", { message: "Only sender can delete for everyone" });
+            return;
+          }
+
+          msg.isDeletedForEveryone = true;
+          msg.text = "This message was deleted";
+          msg.mediaUrl = null;
+          await msg.save();
+
+          io.to(roomId).emit("message:deleted", { messageId, isDeletedForEveryone: true, roomId });
+        } else {
+          if (userId) {
+            await Message.findByIdAndUpdate(messageId, { $addToSet: { deletedFor: userId } });
+            socket.emit("message:deleted_for_me", { messageId });
+          }
+        }
+      } catch (err) {
+        console.error("[Socket.IO] Error in message:delete:", err);
+      }
+    });
+
+    // 11. Disconnect lifecycle
     socket.on("disconnect", async () => {
       activeSocketCount = Math.max(0, activeSocketCount - 1);
       const user = activeUsers.get(socket.id);
@@ -452,6 +622,12 @@ function setupSocketIO(io) {
         }
         activeUsers.delete(socket.id);
         io.emit("users:update", Array.from(activeUsers.values()));
+        io.emit("user:offline", {
+          userId: user.id,
+          _id: user._id,
+          username: user.username,
+          lastSeen: new Date(),
+        });
         if (process.env.NODE_ENV !== "test") {
           console.log(`[Socket.IO] ${user.username} disconnected. Remaining: ${activeSocketCount}`);
         }

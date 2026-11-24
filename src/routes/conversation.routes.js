@@ -16,5 +16,11 @@ router.delete("/groups/:id/members/:targetUserId", requireAuth, convController.r
 router.post("/groups/:id/leave", requireAuth, convController.leaveGroup);
 router.post("/:id/pin", requireAuth, convController.pinConversation);
 router.post("/:id/mute", requireAuth, convController.muteConversation);
+router.post("/:id/archive", requireAuth, convController.archiveConversation);
+router.delete("/:id/clear", requireAuth, convController.clearChat);
+router.delete("/:id", requireAuth, convController.deleteConversation);
+router.get("/:id/media", optionalAuth, convController.getConversationMedia);
+router.post("/groups/:id/invite", requireAuth, convController.getGroupInviteLink);
+router.post("/join/:inviteCode", requireAuth, convController.joinGroupByInvite);
 
 module.exports = router;

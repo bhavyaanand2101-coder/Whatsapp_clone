@@ -16,10 +16,12 @@ const env = require("../config/env");
  */
 async function register(req, res, next) {
   try {
-    const { username, email, password, displayName, avatar, phone, about } = req.body;
+    const { username, email, password, displayName, avatar, phone, pno, mobile, about } = req.body;
+    const finalPhone = phone || pno || mobile || "+91 98000 00000";
+    const finalEmail = email ? email.toLowerCase().trim() : (username ? `${username.toLowerCase().trim()}@whatsapp.local` : null);
 
-    if (!username || !email || !password) {
-      return apiError(res, "Username, email, and password are required.", 400);
+    if (!username || !finalEmail || !password) {
+      return apiError(res, "Username, email/phone, and password are required.", 400);
     }
 
     if (password.length < 6) {
@@ -28,7 +30,7 @@ async function register(req, res, next) {
 
     // Check existing username or email
     const existing = await User.findOne({
-      $or: [{ username: username.toLowerCase().trim() }, { email: email.toLowerCase().trim() }],
+      $or: [{ username: username.toLowerCase().trim() }, { email: finalEmail }],
     });
 
     if (existing) {
@@ -41,11 +43,11 @@ async function register(req, res, next) {
     const passwordHash = hashPassword(password);
     const user = await User.create({
       username: username.toLowerCase().trim(),
-      email: email.toLowerCase().trim(),
+      email: finalEmail,
       passwordHash,
       displayName: displayName ? displayName.trim() : username.trim(),
       avatar: avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${username}`,
-      phone: phone || "+91 98000 00000",
+      phone: finalPhone,
       about: about || "Hey there! I am using WhatsApp.",
       online: true,
     });
@@ -92,27 +94,37 @@ async function register(req, res, next) {
  */
 async function login(req, res, next) {
   try {
-    const { identifier, username, email, password } = req.body;
-    const loginTarget = identifier || username || email;
+    const { identifier, username, email, phone, pno, mobile, password } = req.body;
+    const loginTarget = (identifier || username || email || phone || pno || mobile || "").toString().trim();
 
     if (!loginTarget || !password) {
-      return apiError(res, "Identifier (email or username) and password are required.", 400);
+      return apiError(res, "Identifier (phone, email, or username) and password are required.", 400);
     }
 
-    const user = await User.findOne({
-      $or: [
-        { username: loginTarget.toLowerCase().trim() },
-        { email: loginTarget.toLowerCase().trim() },
-      ],
-    });
+    const cleanPhoneDigits = loginTarget.replace(/[\s\-\(\)\+]/g, "");
+    const searchConditions = [
+      { username: loginTarget.toLowerCase() },
+      { email: loginTarget.toLowerCase() },
+      { phone: loginTarget },
+    ];
+
+    if (cleanPhoneDigits.length >= 6) {
+      searchConditions.push({ phone: cleanPhoneDigits });
+      searchConditions.push({ phone: `+91 ${cleanPhoneDigits}` });
+      // Match phone numbers with flexible spaces/dashes (e.g. 8799999999 matches +91 87999 99999)
+      const digitRegexPattern = cleanPhoneDigits.split("").join("[\\s\\-\\(\\)]*");
+      searchConditions.push({ phone: new RegExp(digitRegexPattern, "i") });
+    }
+
+    const user = await User.findOne({ $or: searchConditions });
 
     if (!user) {
-      return apiError(res, "Invalid username/email or password.", 401);
+      return apiError(res, "Invalid credentials. Please verify your phone number, email, or username and password.", 401);
     }
 
     const isValid = verifyPassword(password, user.passwordHash);
     if (!isValid) {
-      return apiError(res, "Invalid username/email or password.", 401);
+      return apiError(res, "Invalid credentials. Please verify your phone number, email, or username and password.", 401);
     }
 
     // Update status to online
@@ -318,6 +330,160 @@ async function listUsers(req, res, next) {
   }
 }
 
+/**
+ * Request password reset token
+ */
+async function forgotPassword(req, res, next) {
+  try {
+    const { identifier, email } = req.body;
+    const target = (identifier || email || "").toLowerCase().trim();
+
+    if (!target) {
+      return apiError(res, "Username or email is required.", 400);
+    }
+
+    const user = await User.findOne({
+      $or: [{ username: target }, { email: target }],
+    });
+
+    if (!user) {
+      // Return 200/404 based on response strategy; for security / test clarity:
+      return apiError(res, "User not found with provided identifier.", 404);
+    }
+
+    const rawResetToken = generateRandomToken();
+    user.passwordResetToken = hashToken(rawResetToken);
+    user.passwordResetExpires = new Date(Date.now() + 3600 * 1000); // 1 hour
+    await user.save();
+
+    return apiSuccess(
+      res,
+      {
+        resetToken: rawResetToken,
+        expiresIn: 3600,
+      },
+      "Password reset token generated successfully. Valid for 1 hour."
+    );
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Reset password using valid reset token
+ */
+async function resetPassword(req, res, next) {
+  try {
+    const { resetToken, newPassword } = req.body;
+
+    if (!resetToken || !newPassword) {
+      return apiError(res, "Reset token and new password are required.", 400);
+    }
+
+    if (newPassword.length < 6) {
+      return apiError(res, "Password must be at least 6 characters long.", 400);
+    }
+
+    const tokenHash = hashToken(resetToken);
+    const user = await User.findOne({
+      passwordResetToken: tokenHash,
+      passwordResetExpires: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return apiError(res, "Invalid or expired password reset token.", 400);
+    }
+
+    // Set new password
+    user.passwordHash = hashPassword(newPassword);
+    user.passwordResetToken = null;
+    user.passwordResetExpires = null;
+    await user.save();
+
+    // Revoke all existing sessions for security
+    await Session.deleteMany({ userId: user._id });
+
+    return apiSuccess(res, null, "Password has been successfully reset. Please log in with your new password.");
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Change password for authenticated user
+ */
+async function changePassword(req, res, next) {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return apiError(res, "Current password and new password are required.", 400);
+    }
+
+    if (newPassword.length < 6) {
+      return apiError(res, "New password must be at least 6 characters long.", 400);
+    }
+
+    const user = await User.findById(req.user._id);
+    const isValid = verifyPassword(currentPassword, user.passwordHash);
+    if (!isValid) {
+      return apiError(res, "Current password is incorrect.", 401);
+    }
+
+    user.passwordHash = hashPassword(newPassword);
+    await user.save();
+
+    // Revoke all sessions except perhaps fresh login
+    await Session.deleteMany({ userId: user._id });
+
+    return apiSuccess(res, null, "Password changed successfully. Please log in again.");
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Logout from all devices
+ */
+async function logoutAll(req, res, next) {
+  try {
+    await Session.deleteMany({ userId: req.user._id });
+    await User.findByIdAndUpdate(req.user._id, { online: false, lastSeen: new Date() });
+    return apiSuccess(res, null, "Logged out from all devices");
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Deactivate user account
+ */
+async function deactivateAccount(req, res, next) {
+  try {
+    await User.findByIdAndUpdate(req.user._id, {
+      online: false,
+      lastSeen: new Date(),
+    });
+    await Session.deleteMany({ userId: req.user._id });
+    return apiSuccess(res, null, "Account deactivated successfully");
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Delete user account permanently
+ */
+async function deleteAccount(req, res, next) {
+  try {
+    await Session.deleteMany({ userId: req.user._id });
+    await User.findByIdAndDelete(req.user._id);
+    return apiSuccess(res, null, "Account deleted permanently");
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   register,
   login,
@@ -328,4 +494,10 @@ module.exports = {
   blockUser,
   unblockUser,
   listUsers,
+  forgotPassword,
+  resetPassword,
+  changePassword,
+  logoutAll,
+  deactivateAccount,
+  deleteAccount,
 };

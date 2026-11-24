@@ -44,6 +44,19 @@ const userSchema = new mongoose.Schema(
       maxlength: [140, "About status cannot exceed 140 characters"],
       default: "Hey there! I am using WhatsApp.",
     },
+    isAdmin: {
+      type: Boolean,
+      default: false,
+    },
+    passwordResetToken: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    passwordResetExpires: {
+      type: Date,
+      default: null,
+    },
     isAI: {
       type: Boolean,
       default: false,

@@ -48,6 +48,12 @@ const conversationSchema = new mongoose.Schema(
         default: "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=120&h=120&q=80",
       },
     },
+    inviteCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
     lastMessage: {
       text: { type: String, default: "" },
       senderId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },

@@ -31,6 +31,7 @@ const conversationRoutes = require("./src/routes/conversation.routes");
 const messageRoutes = require("./src/routes/message.routes");
 const uploadRoutes = require("./src/routes/upload.routes");
 const aiRoutes = require("./src/routes/ai.routes");
+const notificationRoutes = require("./src/routes/notification.routes");
 
 // Models
 const Conversation = require("./src/models/Conversation");
@@ -84,11 +85,19 @@ app.use((req, res, next) => {
   next();
 });
 
-// 7. Static File Hosting
+// 7. Static File Hosting with OWASP Sandboxing
 if (!fs.existsSync(env.UPLOADS_DIR)) {
   fs.mkdirSync(env.UPLOADS_DIR, { recursive: true });
 }
-app.use("/uploads", express.static(env.UPLOADS_DIR));
+app.use(
+  "/uploads",
+  (req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    next();
+  },
+  express.static(env.UPLOADS_DIR)
+);
 app.use(express.static(path.join(__dirname, "public")));
 
 // ------------------------------------------------------------
@@ -218,6 +227,9 @@ app.use("/api/v1/upload", uploadRoutes);
 
 app.use("/api/ai", aiRoutes);
 app.use("/api/v1/ai", aiRoutes);
+
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/v1/notifications", notificationRoutes);
 
 // 6. Serve main WhatsApp Web frontend
 app.get("/", (req, res) => {
